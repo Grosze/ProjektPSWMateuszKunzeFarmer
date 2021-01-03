@@ -1,14 +1,30 @@
-
-
-try {
-    require('./config/neo4jDriver');  
-  
-    console.log(`Connected to Neo4J.`)
-    const port = process.env.PORT || 5000
-    app.listen(port, () => {
-      console.log(`API server listening at http://localhost:${port}`);
-    });
-  } catch(ex) {
-    console.error('Error connecting to Neo4J', ex);
-  
+const driver = require('./Neo4jDriver/driver.js');
+const resmetryLib = require('resmetry');
+const host = 'mqtt://localhost:1883';
+const settings={
+  protocolId: 'MQIsdp',
+  protocolVersion: 3
 };
+
+const session = driver.session();
+
+const resmetry = new resmetryLib(host, settings, true); 
+const mqtt = resmetry.getMQTTClient();
+
+resmetry.on('connect', message => {
+  console.log(message);
+  mqtt.subscribe('CreateNewGameRequest');
+
+});
+
+resmetry.on('message', (topic, message) => {
+  switchTopic = JSON.parse(topic);
+
+  switch (switchTopic) {
+    case 'CreateNewGameRequest':
+     mqtt.publish('CreateNewGameResponse', 'Hello there', {qos:2})
+    default:
+      console.log('Unsupported topic!')
+  };
+
+});

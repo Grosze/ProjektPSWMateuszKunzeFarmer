@@ -1,6 +1,5 @@
 var mosca = require('mosca');
 var settings = {port: 1883};
-require('dotenv').config();
 
 const broker = new mosca.Server(settings);
 
@@ -8,5 +7,6 @@ const broker = new mosca.Server(settings);
 
 broker.on('ready', () => {
     console.log('Broker jest gotowy do pracy!');
+    
 });
 

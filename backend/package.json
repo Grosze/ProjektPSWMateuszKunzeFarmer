@@ -10,6 +10,8 @@
     "dotenv": "^8.2.0",
     "express": "^4.17.1",
     "mosca": "^2.8.3",
-    "neo4j-driver": "^4.2.1"
+    "mqtt": "^4.2.6",
+    "neo4j-driver": "^4.2.1",
+    "resmetry": "^1.0.9"
   }
 }

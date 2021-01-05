@@ -1,0 +1,1 @@
+/createNewGame?login=string - Tworzy nową grę i dodaje tworzacego jako gracza pierwszego

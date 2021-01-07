@@ -1,8 +1,14 @@
+//imports
+
+const beginRound = require('./modules/functions/beginRound.js');
+const handleExchange = require('./modules/functions/handleExchange');
+const didWon = require('./modules/functions/didWon.js');
+
 //express
 
 const express = require('express');
 const app = express();
-const port = 2137
+const port = 2137;
 
 //mqtt
 
@@ -17,13 +23,15 @@ const neo4j = require('neo4j-driver');
 //Aktywacja localhost
 
 app.listen(port, () => {
-    console.log('Server running on port '+port);
+    console.log('Server running on port ' + port);
     
 });
 
 app.use(express.json());
 
 //Endpointy
+
+//Logowanie
 
 app.post('/LogIn', async (req, res) => {
     try {
@@ -48,7 +56,9 @@ app.post('/LogIn', async (req, res) => {
 
 });
 
-app.post('/CreateNewGame', async (req, res) => {
+//Tworzenie i dołączanie do pokoji jako gracz lub obserwujący
+
+app.post('/CreateGame', async (req, res) => {
     try {
         const session = driver.session();
         
@@ -64,7 +74,8 @@ app.post('/CreateNewGame', async (req, res) => {
     } catch (err) {
         return res.send({result:'error'});
 
-    }
+    };
+
 });
 
 app.post('/:login/JoinGame/:id', async (req, res) => {
@@ -139,12 +150,195 @@ app.post('/:login/SpectateGame/:id', async (req, res) => {
 
             return res.send({result:'Already spectating!'});
         }
+
     } catch (err) {
         return res.send({result:'error'});
 
     };
     
 });
+
+//Enpointy związane z rozgrywką
+
+app.post('/StartGame/:id', async (req, res) => {
+    try {
+        const id = neo4j.int(req.params.id);
+
+        const session = driver.session();
+
+        const getPlayers = await session.run(
+            'Match (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id RETURN a.login',
+            {id}
+        );
+        
+        const playersList = getPlayers.records.map(x => x._fields[0]);
+        
+        await session.run(
+            'Match (b:Game) WHERE ID(b) = $id SET b.players = $playersList, b.turn = b.players[0]',
+            {id, playersList}
+        );
+
+        playersList.forEach(async (login) => {
+            const session = driver.session();
+
+            await session.run(
+                'Match (a:Player) WHERE a.login = $login SET a.sheep = 0, a.rabbit = 0, a.pig = 0, a.cow = 0, a.horse = 0, a.smallDog = 0, a.bigDog = 0',
+                {login}
+            );
+
+            session.close();
+
+        });
+
+        const gameData = await session.run(     
+            'MATCH (b:Game) WHERE ID(b) = $id RETURN b',
+            {id}
+        )
+        .then((res) => {
+            return res.records[0]._fields[0].properties;
+        });
+
+        const whichPlayerTurnIsNow = gameData.turn;
+
+        const playerStats = await session.run(
+            'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id AND a.login = $whichPlayerTurnIsNow RETURN a',
+            {id, whichPlayerTurnIsNow}
+        )
+        .then((res) => {
+            return res.records[0]._fields[0].properties;
+        });
+
+        const playerStatsAfterDices = beginRound(playerStats);
+
+        await session.run(
+            'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id AND a.login = $login SET a.rabbit = $rabbit, a.sheep = $sheep, a.pig = $pig, a.cow = $cow, a.horse = $horse, a.smallDog = $smallDog, a.bigDog = $bigDog',
+            {...playerStatsAfterDices['playerStatsAfterDices'], id}
+        );
+
+        session.close();
+
+        return res.send({...playerStatsAfterDices});
+
+    } catch (err) {
+        return res.send({result:'error'});
+
+    };
+
+});
+
+app.post('/:login/Exchange/:id', async (req, res) => {
+    try {
+        const id = neo4j.int(req.params.id);
+        const login = req.params.login;
+        const from = req.body.from;
+        const to = req.body.to;
+
+        const session = driver.session();
+
+        const auth = await session.run(
+            'Match (b:Game) WHERE ID(b) = $id RETURN b.turn',
+            {id}
+        );
+
+        const whichPlayerTurnIsNow = auth.records[0]._fields[0];
+
+        if (whichPlayerTurnIsNow === login) { 
+            const playerStats = await session.run(
+                'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id AND a.login = $login RETURN a',
+                {id, login}
+            ).then((res) => {
+                return res.records[0]._fields[0].properties;
+            });
+
+            const playerStatsAfterExchange = handleExchange(playerStats, from, to);
+
+            await session.run(
+                'MATCH (a:Player) WHERE a.login = $login SET a.rabbit = $rabbit, a.sheep = $sheep, a.pig = $pig, a.cow = $cow, a.horse = $horse, a.smallDog = $smallDog, a.bigDog = $bigDog',
+                {...playerStatsAfterExchange}
+            );
+
+            const checkIfPlayerWon = didWon(playerStatsAfterExchange);
+
+            if (checkIfPlayerWon === true) {
+                session.close();
+
+                return res.send({result:1});
+
+            } else {
+                session.close();
+
+                return res.send({result:0});
+
+            };
+
+        } else {
+            session.close();
+
+            return res.send({result:0});
+
+        };
+
+    } catch (err) {
+        return res.send({result:'error'});
+
+    };
+
+});
+
+app.post('/:login/EndTurn/:id', async (req, res) => {
+    try {
+        const id = neo4j.int(req.params.id);
+        const login = req.params.login;
+
+        const session = driver.session();
+
+        const auth = await session.run(
+            'Match (b:Game) WHERE ID(b) = $id RETURN b.turn',
+            {id}
+        );
+
+        const whichPlayerTurnIsNow = auth.records[0]._fields[0];
+
+        if (whichPlayerTurnIsNow === login) { 
+
+            const gameData = await session.run(     
+                'MATCH (b:Game) WHERE ID(b) = $id RETURN b',
+                {id}
+            )
+            .then((res) => {
+                return res.records[0]._fields[0].properties;
+            });
+
+            const players = [...gameData.players.slice(1),gameData.players[0]];
+            const turn = players[0];
+
+            await session.run(     
+                'MATCH (b:Game) WHERE ID(b) = $id SET b.players = $players, b.turn = $turn',
+                {id, players, turn}
+            );
+
+            
+
+            session.close();
+
+            return res.send({result:'your turn!'});
+
+        } else {
+            session.close();
+
+            return res.send({result:'not your turn!'});
+
+        };  
+
+    } catch (err) {
+        return res.send({result:'error'});
+
+    };
+
+});
+
+
+//Enpointy związane z chatem
 
 app.post('/:login/PostMessage/:id', async (req, res) => {
     try {

@@ -7,9 +7,9 @@ const dbConnData = {
 };
 
 const driver = neo4j.driver(
-    dbConnData.uri, 
-    neo4j.auth.basic(dbConnData.user, dbConnData.password), 
-    {disableLosslessIntegers: true}
-    );
+  dbConnData.uri, 
+  neo4j.auth.basic(dbConnData.user, dbConnData.password), 
+  {disableLosslessIntegers: true}
+);
 
 module.exports = driver;

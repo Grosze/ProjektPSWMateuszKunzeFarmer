@@ -13,7 +13,7 @@ const port = 2137;
 //mqtt
 
 const mqtt = require('mqtt');
-const client  = mqtt.connect('mqtt://localhost:1883');
+const client  = mqtt.connect('mqtt://localhost:1883/mqtt');
 
 //neo4j
 
@@ -47,6 +47,10 @@ app.post('/LogIn', async (req, res) => {
         
         session.close();
 
+        const mqttMessage = JSON.stringify({login});
+
+        client.publish(login + '/LogIn', mqttMessage);
+
         return res.send({result: 0});
 
     } catch (err) {
@@ -64,7 +68,7 @@ app.post('/CreateGame', async (req, res) => {
         
         await session
             .run(
-                'CREATE (a: Game {chat:[]})'
+                'CREATE (a: Game {chat:[], players:[], hasStarted:"NO"})'
             );
 
         session.close();
@@ -91,24 +95,48 @@ app.post('/:login/JoinGame/:id', async (req, res) => {
                 {id}
             );
 
+        const auth2 = await session
+            .run(
+                'MATCH (b:Game) WHERE ID(b) = $id return b.hasStarted',
+                {id}
+            );
+        
+        const auth3 = await session
+            .run(
+                'MATCH (a:Player)-[r:IS_PLAYING]->(b:Game) WHERE a.login = $login RETURN COUNT(r)',
+                {login}
+            );
+
         playersLimit = auth.records.length;
         isAlreadyInRoom = auth.records.filter(x => x._fields[0] === login).length;
-        
-        if (playersLimit < 4 && isAlreadyInRoom === 0) {
+        hasStarted = auth2.records[0]._fields[0];
+        isInOtherRoom = auth3.records[0]._fields[0];
+
+        if (playersLimit < 4 && isAlreadyInRoom === 0 && hasStarted === 'NO' && isInOtherRoom === 0) {
             await session
                 .run(
                     'MATCH (a: Player),(b: Game) WHERE ID(b) = $id AND a.login = $login CREATE (a)-[r:IS_PLAYING]->(b) RETURN r',
-                    {login, id}
+                    {id, login:login}
+                );
+
+            await session
+                .run(
+                    'MATCH (a:Game) WHERE id(a) = $id SET a.players = a.players + $login',
+                    {id, login}
                 );
             
+            const message = JSON.stringify(id);
+
+            client.publish('/Game/' + id + '/JoinInfo', message);
+
             session.close();
 
-            return res.send({result:'joined!'});
+            return res.send({result:0});
 
         } else {
             session.close();
 
-            return res.send({result:'full or already in the room!'});
+            return res.send({result:1});
 
         };
 
@@ -131,10 +159,17 @@ app.post('/:login/SpectateGame/:id', async (req, res) => {
                 'MATCH (a:Player)-[r:IS_SPECTATING]->(b:Game) WHERE ID(b) = $id return a.login',
                 {id}
             );
-        
-        isAlreadySpectating = auth.records.filter(x => x._fields[0] === login).length;
+            
+        const auth2 = await session
+            .run(
+                'MATCH (a:Player)-[r:IS_PLAYING]->(b:Game) WHERE a.login = $login RETURN COUNT(r)',
+                {login}
+            );
 
-        if (isAlreadySpectating === 0) {
+        isAlreadySpectating = auth.records.filter(x => x._fields[0] === login).length;
+        isInOtherRoom = auth2.records[0]._fields[0];
+
+        if (isAlreadySpectating === 0 && isInOtherRoom === 0) {
             await session
                 .run(
                     'MATCH (a: Player),(b: Game) WHERE ID(b) = $id AND a.login = $login CREATE (a)-[r:IS_SPECTATING]->(b) RETURN r',
@@ -143,12 +178,12 @@ app.post('/:login/SpectateGame/:id', async (req, res) => {
 
                 session.close();
 
-                return res.send({result:'Spectating!'});
+                return res.send({result:0});
 
         } else {
             session.close();
 
-            return res.send({result:'Already spectating!'});
+            return res.send({result:1});
         }
 
     } catch (err) {
@@ -182,7 +217,7 @@ app.post('/StartGame/:id', async (req, res) => {
             const session = driver.session();
 
             await session.run(
-                'Match (a:Player) WHERE a.login = $login SET a.sheep = 0, a.rabbit = 0, a.pig = 0, a.cow = 0, a.horse = 0, a.smallDog = 0, a.bigDog = 0',
+                'Match (a:Player) WHERE a.login = $login SET a.sheep = 0, a.rabbit = 0, a.pig = 0, a.cow = 0, a.horse = 0, a.smallDog = 0, a.bigDog = 0, a.hasStarted = "YES"',
                 {login}
             );
 
@@ -317,11 +352,35 @@ app.post('/:login/EndTurn/:id', async (req, res) => {
                 {id, players, turn}
             );
 
-            
+            const playerStats = await session.run(
+                'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id AND a.login = $login RETURN a',
+                {id, login:turn}
+            ).then((res) => {
+                return res.records[0]._fields[0].properties;
+            });
 
-            session.close();
+            const playerStatsAfterDices = beginRound(playerStats);
 
-            return res.send({result:'your turn!'});
+            await session.run(
+                'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id AND a.login = $login SET a.rabbit = $rabbit, a.sheep = $sheep, a.pig = $pig, a.cow = $cow, a.horse = $horse, a.smallDog = $smallDog, a.bigDog = $bigDog',
+                {...playerStatsAfterDices['playerStatsAfterDices'], id}
+            );
+
+            const checkIfPlayerWon = didWon(playerStatsAfterDices['playerStatsAfterDices']);
+
+            console.log(playerStatsAfterDices['redDiceResult'], playerStatsAfterDices['greenDiceResult'])
+
+            if (checkIfPlayerWon === true) {
+                session.close();
+
+                return res.send({result:1});
+
+            } else {
+                session.close();
+
+                return res.send({result:0});
+
+            };
 
         } else {
             session.close();
@@ -430,5 +489,35 @@ app.post('/:loginFrom/PostAMessageTo/:loginTo', async (req, res) => {
         return res.send({result:'error'});
 
     };
+
+});
+
+//Enpointy typu GET
+
+app.get('/:login/getGamesList', async (req, res) => {
+    const login = req.params.login;
+
+    const session = driver.session();
+
+    const gamesList = await session.run(
+        'MATCH (b: Game) return ID(b),b.players,b.hasStarted',
+    )
+    .then((res) => {
+        return res.records.map(x => {
+            return {
+                id:  x._fields[0],
+                playersNumber: x._fields[1].length,
+                hasStarted: x._fields[2]
+            };
+
+        });
+
+    });
+
+    const message = JSON.stringify(gamesList);
+
+    client.publish('/' + login + '/GamesList', message);
+
+    return res.send({result:0});
 
 });

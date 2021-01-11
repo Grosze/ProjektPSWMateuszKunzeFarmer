@@ -3,6 +3,8 @@
 const beginRound = require('./modules/functions/beginRound.js');
 const handleExchange = require('./modules/functions/handleExchange');
 const didWon = require('./modules/functions/didWon.js');
+const preapareStateToSend = require('./modules/functions/prepareStateToSend.js');
+const preapareChatState = require('./modules/functions/preapareChatState');
 
 //express
 
@@ -47,7 +49,7 @@ app.post('/LogIn', async (req, res) => {
         
         session.close();
 
-        const mqttMessage = JSON.stringify({login});
+        const mqttMessage = JSON.stringify(login);
 
         client.publish(login + '/LogIn', mqttMessage);
 
@@ -125,9 +127,9 @@ app.post('/:login/JoinGame/:id', async (req, res) => {
                     {id, login}
                 );
             
-            const message = JSON.stringify(id);
+            const message = JSON.stringify(req.params.id);
 
-            client.publish('/Game/' + id + '/JoinInfo', message);
+            client.publish('/' + login + '/Game/' + id + '/JoinInfo', message);
 
             session.close();
 
@@ -178,6 +180,10 @@ app.post('/:login/SpectateGame/:id', async (req, res) => {
 
                 session.close();
 
+                const message = JSON.stringify(req.params.id);
+
+                client.publish('/' + login + '/Game/' + id + '/SpectateInfo', message);
+
                 return res.send({result:0});
 
         } else {
@@ -209,7 +215,7 @@ app.post('/StartGame/:id', async (req, res) => {
         const playersList = getPlayers.records.map(x => x._fields[0]);
         
         await session.run(
-            'Match (b:Game) WHERE ID(b) = $id SET b.players = $playersList, b.turn = b.players[0]',
+            'Match (b:Game) WHERE ID(b) = $id SET b.players = $playersList, b.turn = b.players[0], b.hasStarted = "YES"',
             {id, playersList}
         );
 
@@ -217,7 +223,7 @@ app.post('/StartGame/:id', async (req, res) => {
             const session = driver.session();
 
             await session.run(
-                'Match (a:Player) WHERE a.login = $login SET a.sheep = 0, a.rabbit = 0, a.pig = 0, a.cow = 0, a.horse = 0, a.smallDog = 0, a.bigDog = 0, a.hasStarted = "YES"',
+                'Match (a:Player) WHERE a.login = $login SET a.sheep = 0, a.rabbit = 0, a.pig = 0, a.cow = 0, a.horse = 0, a.smallDog = 0, a.bigDog = 0',
                 {login}
             );
 
@@ -246,13 +252,33 @@ app.post('/StartGame/:id', async (req, res) => {
         const playerStatsAfterDices = beginRound(playerStats);
 
         await session.run(
-            'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id AND a.login = $login SET a.rabbit = $rabbit, a.sheep = $sheep, a.pig = $pig, a.cow = $cow, a.horse = $horse, a.smallDog = $smallDog, a.bigDog = $bigDog',
-            {...playerStatsAfterDices['playerStatsAfterDices'], id}
+            'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id AND a.login = $login SET b.redDice = $redDice, b.greenDice = $greenDice, a.rabbit = $rabbit, a.sheep = $sheep, a.pig = $pig, a.cow = $cow, a.horse = $horse, a.smallDog = $smallDog, a.bigDog = $bigDog',
+            {...playerStatsAfterDices['playerStatsAfterDices'],redDice: playerStatsAfterDices.redDiceResult, greenDice: playerStatsAfterDices.greenDiceResult, id}
         );
+
+        const gameState = await session.run(
+            'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id RETURN b',
+            {id}
+        )
+        .then((res) => {
+            return res.records[0]._fields[0].properties;
+        });
+
+        const playersState = await session.run(
+            'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id RETURN a',
+            {id}
+        )
+        .then((res) => {
+            return res.records.map(x => x._fields[0].properties);
+        });
+
+        const message = JSON.stringify(preapareStateToSend(playersState, gameState));
+
+        client.publish('/Game/' + req.params.id + '/NewGameState', message);
 
         session.close();
 
-        return res.send({...playerStatsAfterDices});
+        return res.send({result: 0});
 
     } catch (err) {
         return res.send({result:'error'});
@@ -295,11 +321,40 @@ app.post('/:login/Exchange/:id', async (req, res) => {
             const checkIfPlayerWon = didWon(playerStatsAfterExchange);
 
             if (checkIfPlayerWon === true) {
+                const message = JSON.stringify({whoWon: login});
+
+                client.publish('/Game/' + req.params.id + '/WonBy', message);
+
+                await session.run(
+                    'MATCH (a:Game) where ID(a) = $id DETACH DELETE a',
+                    {id}
+                );
+
                 session.close();
 
                 return res.send({result:1});
 
             } else {
+                const gameState = await session.run(
+                    'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id RETURN b',
+                    {id}
+                )
+                .then((res) => {
+                    return res.records[0]._fields[0].properties;
+                });
+        
+                const playersState = await session.run(
+                    'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id RETURN a',
+                    {id}
+                )
+                .then((res) => {
+                    return res.records.map(x => x._fields[0].properties);
+                });
+        
+                const message = JSON.stringify(preapareStateToSend(playersState, gameState));
+        
+                client.publish('/Game/' + req.params.id + '/NewGameState', message);
+
                 session.close();
 
                 return res.send({result:0});
@@ -342,6 +397,7 @@ app.post('/:login/EndTurn/:id', async (req, res) => {
             )
             .then((res) => {
                 return res.records[0]._fields[0].properties;
+
             });
 
             const players = [...gameData.players.slice(1),gameData.players[0]];
@@ -357,13 +413,14 @@ app.post('/:login/EndTurn/:id', async (req, res) => {
                 {id, login:turn}
             ).then((res) => {
                 return res.records[0]._fields[0].properties;
+
             });
 
             const playerStatsAfterDices = beginRound(playerStats);
 
             await session.run(
-                'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id AND a.login = $login SET a.rabbit = $rabbit, a.sheep = $sheep, a.pig = $pig, a.cow = $cow, a.horse = $horse, a.smallDog = $smallDog, a.bigDog = $bigDog',
-                {...playerStatsAfterDices['playerStatsAfterDices'], id}
+                'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id AND a.login = $login SET b.redDice = $redDice, b.greenDice = $greenDice,  a.rabbit = $rabbit, a.sheep = $sheep, a.pig = $pig, a.cow = $cow, a.horse = $horse, a.smallDog = $smallDog, a.bigDog = $bigDog',
+                {...playerStatsAfterDices['playerStatsAfterDices'], redDice: playerStatsAfterDices.redDiceResult, greenDice: playerStatsAfterDices.greenDiceResult, id}
             );
 
             const checkIfPlayerWon = didWon(playerStatsAfterDices['playerStatsAfterDices']);
@@ -371,11 +428,40 @@ app.post('/:login/EndTurn/:id', async (req, res) => {
             console.log(playerStatsAfterDices['redDiceResult'], playerStatsAfterDices['greenDiceResult'])
 
             if (checkIfPlayerWon === true) {
+                const message = JSON.stringify({whoWon: login});
+
+                client.publish('/Game/' + req.params.id + '/WonBy', message);
+
+                await session.run(
+                    'MATCH (a:Game) where ID(a) = $id DETACH DELETE a',
+                    {id}
+                );
+                
                 session.close();
 
                 return res.send({result:1});
 
             } else {
+                const gameState = await session.run(
+                    'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id RETURN b',
+                    {id}
+                )
+                .then((res) => {
+                    return res.records[0]._fields[0].properties;
+                });
+        
+                const playersState = await session.run(
+                    'MATCH (a:Player)-[:IS_PLAYING]->(b:Game) WHERE ID(b) = $id RETURN a',
+                    {id}
+                )
+                .then((res) => {
+                    return res.records.map(x => x._fields[0].properties);
+                });
+        
+                const message = JSON.stringify(preapareStateToSend(playersState, gameState));
+        
+                client.publish('/Game/' + req.params.id + '/NewGameState', message);
+                
                 session.close();
 
                 return res.send({result:0});
@@ -405,24 +491,32 @@ app.post('/:login/PostMessage/:id', async (req, res) => {
         const id = neo4j.int(req.params.id);
         const message = req.body.message;
 
-        const record = login + '/' + message;
+        const record = login + ':' + message;
 
         const session = driver.session();
         
         const auth = await session
             .run(
-                'MATCH (a:Player)-[]->(b:Game) RETURN a.login',
+                'MATCH (a:Player)-[]->(b:Game) WHERE ID(b) = $id RETURN a',
                 {id}
             );
         
-        isInGame = auth.records.filter(x => x._fields[0] === login).length;
+        const isInGame = auth.records.map(x => x._fields[0].properties.login).filter(x => x === login).length
 
         if (isInGame === 1) {
-            await session
+
+            const chat = await session
                 .run(
-                    'MATCH (a:Game) WHERE ID(a)=120 SET a.chat = a.chat + $record return a',
-                    {record}
-                );
+                    'MATCH (a:Game) WHERE ID(a) = $id SET a.chat = a.chat + $record return a.chat',
+                    {record, id}
+                ).then((res) => {
+                    return res.records[0]._fields[0]
+
+                });
+            
+            const message = JSON.stringify(chat);
+
+            client.publish('/Game/' + req.params.id + '/NewMessageInChat', message);
             
             session.close();
             
@@ -450,9 +544,32 @@ app.post('/:firstLogin/CreateChatRoom/:secondLogin', async (req, res) => {
         const session = driver.session();
 
         await session.run(
-            'MATCH (b:Player {login:"JS"}),(c:Player {login:"JD"}) CREATE (a:ChatRoom {chat:[]}), (b)-[:IS_CHATTING]->(a),(c)-[:IS_CHATTING]->(a)',
+            'MATCH (b:Player {login:$firstLogin}),(c:Player {login:$secondLogin}) CREATE (a:ChatRoom {chat:[], users:[$firstLogin, $secondLogin]}), (b)-[:IS_CHATTING]->(a),(c)-[:IS_CHATTING]->(a)',
             {firstLogin, secondLogin}
         );
+
+        const firstLoginChats = await session.run(
+            'MATCH (a:Player)-[:IS_CHATTING]->(b:ChatRoom) WHERE a.login = $firstLogin RETURN b',
+            {firstLogin}
+        )
+        .then((res) => {
+            return res.records.map(x => x._fields[0].properties);
+        });
+
+        const firstLoginState = preapareChatState(firstLoginChats, firstLogin);
+
+        const secondLoginChats = await session.run(
+            'MATCH (a:Player)-[:IS_CHATTING]->(b:ChatRoom) WHERE a.login = $secondLogin RETURN b',
+            {secondLogin}
+        )
+        .then((res) => {
+            return res.records.map(x => x._fields[0].properties);
+        });
+
+        const secondLoginState = preapareChatState(secondLoginChats, secondLogin);
+
+        client.publish('/' + firstLogin + '/NewChatState', JSON.stringify(firstLoginState));
+        client.publish('/' + secondLogin + '/NewChatState', JSON.stringify(secondLoginState));
 
         session.close();
 
@@ -467,19 +584,41 @@ app.post('/:firstLogin/CreateChatRoom/:secondLogin', async (req, res) => {
 
 app.post('/:loginFrom/PostAMessageTo/:loginTo', async (req, res) => {
     try {
-        const sender = req.params.loginFrom;
-        const receiver = req.params.loginFrom;
+        const firstLogin = req.params.loginFrom;
+        const secondLogin = req.params.loginTo;
         const message = req.body.message;
 
-        const record = sender + '/' + message;
+        const record = firstLogin + ':' + message;
 
         const session = driver.session();
 
-        
         await session.run(
-            'MATCH (a: ChatRoom),(b: Player {login: $sender}),(c: Player {login: $receiver}) WHERE (b)-[:IS_CHATTING]->(a) AND (c)-[:IS_CHATTING]->(a) SET a.chat = a.chat + $record',
-            {sender, receiver, record}
+            'MATCH (a: ChatRoom),(b: Player {login: $firstLogin}),(c: Player {login: $secondLogin}) WHERE (b)-[:IS_CHATTING]->(a) AND (c)-[:IS_CHATTING]->(a) SET a.chat = a.chat + $record',
+            {firstLogin, secondLogin, record}
         );
+        
+        const firstLoginChats = await session.run(
+            'MATCH (a:Player)-[:IS_CHATTING]->(b:ChatRoom) WHERE a.login = $firstLogin RETURN b',
+            {firstLogin}
+        )
+        .then((res) => {
+            return res.records.map(x => x._fields[0].properties);
+        });
+
+        const firstLoginState = preapareChatState(firstLoginChats, firstLogin);
+
+        const secondLoginChats = await session.run(
+            'MATCH (a:Player)-[:IS_CHATTING]->(b:ChatRoom) WHERE a.login = $secondLogin RETURN b',
+            {secondLogin}
+        )
+        .then((res) => {
+            return res.records.map(x => x._fields[0].properties);
+        });
+
+        const secondLoginState = preapareChatState(secondLoginChats, secondLogin);
+
+        client.publish('/' + firstLogin + '/NewChatState', JSON.stringify(firstLoginState));
+        client.publish('/' + secondLogin + '/NewChatState', JSON.stringify(secondLoginState));
 
         session.close();
 
@@ -519,5 +658,50 @@ app.get('/:login/getGamesList', async (req, res) => {
     client.publish('/' + login + '/GamesList', message);
 
     return res.send({result:0});
+
+});
+
+
+app.get('/:login/getAllUsers', async (req, res) => {
+    const login = req.params.login;
+
+    const session = driver.session();
+
+    const allPlayersWithoutLogin = await session.run(
+        'MATCH (a:Player) RETURN a',
+    )
+    .then ((res) => {
+        return res.records.map(x => x._fields[0].properties.login).filter(x => x !== login);
+
+    });
+
+    const allPlayersWhoChatWithLogin = await session.run(
+        'MATCH (a:Player)-[:IS_CHATTING]->(b:ChatRoom), (c:Player)-[:IS_CHATTING]->(b:ChatRoom) WHERE a.login = $login RETURN c',
+        {login}
+    )
+    .then((res) => {
+        return res.records.map(x => x._fields[0].properties.login);
+
+    });
+
+    const allPlayersWhoDontChatWithLogin = allPlayersWithoutLogin.filter(x => {
+        return allPlayersWhoChatWithLogin.reduce((acc, value) => {
+            if (x === value) {
+                return false&acc;
+
+            } else {
+                return true&acc;
+
+            };
+
+        }, true);
+
+    });
+
+    const message = JSON.stringify(allPlayersWhoDontChatWithLogin);
+
+    client.publish('/' + login + '/NewPlayersList', message);
+
+    return res.send({result: 0});
 
 });

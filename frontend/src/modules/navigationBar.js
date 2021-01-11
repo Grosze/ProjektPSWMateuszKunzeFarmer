@@ -11,7 +11,7 @@ function Navigation() {
                 <Link to='/Game' >
                     <li>GAME</li>
                 </Link>
-                <Link to='/PrivateChat' >
+                <Link to='/DirectChat' >
                     <li>DIRECT CHAT</li>
                 </Link>
             </ul>

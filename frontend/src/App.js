@@ -2,6 +2,7 @@ import './App.css';
 import { connect } from 'react-redux';
 import LoginScreen from './modules/loginScreen.js';
 import Navigation from './modules/navigationBar.js';
+import DirectChat from './modules/directChat.js'
 import GamesList from './modules/gamesList.js';
 import Game from './modules/game.js';
 import { BrowserRouter as Router, Switch, Route } from 'react-router-dom';
@@ -22,6 +23,7 @@ function App({user}) {
           <Switch>
             <Route path='/' exact component={GamesList} />
             <Route path='/Game' component={Game} />
+            <Route path='/DirectChat' component={DirectChat} />
           </Switch>
         </Router>
       </div>

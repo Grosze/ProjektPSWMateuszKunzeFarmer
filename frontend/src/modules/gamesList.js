@@ -1,52 +1,62 @@
 import { addGame, clearGamesList } from '../store/actions/gamesActions.js';
-import { joinGame } from '../store/actions/playingActions.js';
+import { joinGame, spectateGame } from '../store/actions/playingActions.js';
 import axios from 'axios';
 import { connect } from 'react-redux';
 import { useState, useEffect } from 'react';
 
-function GamesList ({games, user, addGame, clearGamesList, joinGame}) {
+function GamesList ({games, user, addGame, clearGamesList, joinGame, spectateGame}) {
     const mqtt = require('mqtt');
-    const client = mqtt.connect('mqtt:localhost:9001');
-    const [gameId, setGameId] = useState('');
+    const [client, setClient] = useState(mqtt.connect('mqtt:localhost:9001'));
 
     useEffect(() => {
-            const mqtt = require('mqtt');
-            const client = mqtt.connect('mqtt:localhost:9001');
-
-            client.on('connect', () => {
-                client.subscribe('/' + user.login + '/GamesList');
-        
+        setClient(state => {
+            state.on('connect', () => {
+                console.log('connected!');
+    
             });
-            
-            client.on('message', async (topic, message) => {
-                console.log('hi');
+    
+            state.on('error', (err) => {
+                console.error('Connection error: ', err);
+                client.end();
+    
+            });
+    
+            state.on('message', (topic, message) => {
                 switch (topic) {
                     case '/' + user.login + '/GamesList':
-                        const gamesList = JSON.parse(message);
+                        clearGamesList()
+
+                        const data = JSON.parse(message);
                         
-                        clearGamesList();
+                        data.forEach(game => {
+                        addGame(game);
 
-                        gamesList.forEach(x => {
-                            addGame(x);
-
-                        }); 
+                        });
 
                         break;
                     
-                    case '/Game/' + gameId + '/JoinInfo':
-                        const id = JSON.parse(message);
-                        console.log('hello');
-
-                        joinGame(id);
-
-                        break;
-
                     default:
-                        console.log('error');
-                };  
-        
+                        const wantToJoinOrSpectate = topic.split('/')[topic.split('/').length - 1];
+
+                        if (wantToJoinOrSpectate === 'JoinInfo') {
+                            joinGame(JSON.parse(message));
+
+                        } else {
+                            spectateGame(JSON.parse(message));
+
+                        };
+
+                };
+                
             });
 
+            state.subscribe('/' + user.login + '/GamesList');
+
+            return state;
+        });
+
+        axios.get('/' + user.login + '/getGamesList');
+    
     }, []);
 
     const handleRefresh = () => {
@@ -56,27 +66,26 @@ function GamesList ({games, user, addGame, clearGamesList, joinGame}) {
 
     const handleCreateGame = () => {
         axios.post('/CreateGame');
-        handleRefresh();
 
     };
 
-    const handleJoin = (id) => {
-        console.log(id);
-        setGameId(id);
-        client.subscribe('/Game/' + id + '/JoinInfo');
+    const handleJoinGame = (id) => {
+        client.subscribe('/' + user.login + '/Game/' + id + '/JoinInfo');
         axios.post('/' + user.login + '/JoinGame/' + id);
 
     };
 
-    const handleSpectate = () => {
+    const handleSpectateGame = (id) => {
+        client.subscribe('/' + user.login + '/Game/' + id + '/SpectateInfo');
+        axios.post('/' + user.login + '/SpectateGame/' + id);
 
     };
 
     return (
-        <div>
+        <div className='Games-div'>
             <button onClick={() => handleRefresh()}>REFRESH</button>
             <button onClick={() => handleCreateGame()}>CREATE GAME</button>
-            <table>
+            <table className='Games-List'>
                 <thead>
                     <tr>
                         <th>Game id</th>
@@ -89,12 +98,12 @@ function GamesList ({games, user, addGame, clearGamesList, joinGame}) {
                 <tbody>
                     {games.map(x => {
                         return (
-                            <tr id={x.id}>
+                            <tr key={x.id}>
                                 <td>{x.id}</td>
                                 <td>{x.playersNumber}/4</td>
                                 <td>{x.hasStarted}</td>
-                                <td><button onClick={() => {handleJoin(x.id)}}>JOIN</button></td>
-                                <td><button>SPECTATE</button></td>
+                                <td><button onClick={() => {handleJoinGame(x.id)}}>JOIN</button></td>
+                                <td><button onClick={() => {handleSpectateGame(x.id)}}>SPECTATE</button></td>
                             </tr>
                         );
                     })}
@@ -112,5 +121,5 @@ const mapStateToProps  = (state) => (
     }
 );
   
-export default connect(mapStateToProps, {addGame, clearGamesList, joinGame})(GamesList);
+export default connect(mapStateToProps, {addGame, clearGamesList, joinGame, spectateGame})(GamesList);
 

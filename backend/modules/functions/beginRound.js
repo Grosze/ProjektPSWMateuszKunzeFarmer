@@ -22,7 +22,7 @@ module.exports = function (playerStats) {
 
         case (greenDiceResult === 'wolf'):
             if (playerStatsAfterDices.bigDog > 0) {
-                playerStatsAfterDices.bigDog = playerStatsAfterDices -1;
+                playerStatsAfterDices.bigDog = playerStatsAfterDices.bigDog -1;
 
             } else {
                 for (key in playerStatsAfterDices) {

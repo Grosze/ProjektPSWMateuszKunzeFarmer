@@ -1,22 +1,38 @@
 import { logIn } from '../store/actions/userActions.js';
 import axios from 'axios';
 import { connect } from 'react-redux';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 
 function LoginScreen ({user, logIn}) {
-    const [input, setInput] = useState('');
-    const [topicer, setTopicer] = useState('');
     const mqtt = require('mqtt');
-    const client = mqtt.connect('mqtt:localhost:9001');
 
-    client.on('message', (topic, message) => {
-        const login = JSON.parse(message)["login"];
-        logIn(login);
+    const [input, setInput] = useState('');
+    const [client, setClient] = useState(mqtt.connect('mqtt:localhost:9001'));
 
-        client.unsubscribe(topicer);
-        
-    });
+    useEffect(() => {
+        setClient(state => {
+            state.on('connect', () => {
+                console.log('connected!');
+    
+            });
+    
+            state.on('error', (err) => {
+                console.error('Connection error: ', err);
+                client.end();
+    
+            });
+    
+            state.on('message', (topic, message) => {
+                const login = JSON.parse(message);
+                logIn(login);
+                
+            });
+
+            return state;
+        });
+    
+    }, []);
 
     const handleLogIn = () => {
         client.subscribe(input+'/LogIn')
@@ -25,8 +41,8 @@ function LoginScreen ({user, logIn}) {
             {
                 login: input
             }
-        ).then((result) => {
-            setTopicer(input+'/LogIn');
+
+        ).then(() => {
             setInput(''); 
 
         });

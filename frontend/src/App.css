@@ -1,5 +1,16 @@
+
+
 .App {
   text-align: center;
+  background-color: #f9e0ae;
+  position: absolute;
+  top: 0;
+  left : 0;
+  height: 100%;
+  width: 100%;
+  color:white;
+  padding-top: 0%;
+  margin: 0px;
 }
 
 .App-logo {
@@ -13,6 +24,33 @@
   }
 }
 
+.PlayingDisplay {
+  display: flex;
+  flex-direction:row;
+  justify-content: space-around;
+  margin: 30px;
+}
+
+ul {
+  display:flex;
+  flex-direction:row;
+  justify-content: space-around;
+  list-style-type: none;
+  padding: 20px;
+  color:white;
+  
+}
+
+nav {
+  background-color: #fc8621;
+  text-decoration-style: none;
+}
+
+.StatsDisplay {
+  background-color:#fc8621;
+  padding:10px
+}
+
 .App-header {
   background-color: #282c34;
   min-height: 100vh;
@@ -22,6 +60,40 @@
   justify-content: center;
   font-size: calc(10px + 2vmin);
   color: white;
+}
+
+th {
+  background-color: #c24914;
+  border-color:#fc8621;
+  padding:3px;
+}
+
+td {
+  background-color: #c24914;
+  border-style: solid;
+  border-color: #fc8621;
+}
+
+.Games-List {
+  margin-left: auto;
+  margin-right: auto;
+  background-color: #fc8621;
+}
+
+.Mapper {
+  background-color: #c24914;
+  margin:2px;
+  padding:5px;
+}
+
+button {
+  background-color: #682c0e;
+  border: none;
+	padding: 0;
+  font: inherit;
+  margin:5px;
+  padding:3px;
+  color:white;
 }
 
 .App-link {
